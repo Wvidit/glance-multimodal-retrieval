@@ -1,0 +1,95 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{hyperref}
+\usepackage{geometry}
+\geometry{margin=1in}
+
+\title{Glance ML Internship Assignment: \\ Multimodal Fashion \& Context Retrieval}
+\author{}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Approaches}
+To build a system capable of searching fashion images by specific clothing attributes, environment context, and style vibe, several approaches were evaluated:
+
+\subsection*{A. Zero-Shot Vision-Language Models (e.g., CLIP, SigLIP)}
+\begin{itemize}
+    \item \textbf{How it works:} Encodes both images and search queries into a shared multi-modal embedding space. Retrieval is performed using cosine similarity.
+    \item \textbf{Trade-offs:} Highly scalable and fast. However, standard CLIP models struggle severely with compositionality (e.g., distinguishing ``red shirt, blue pants'' from ``blue shirt, red pants'') and often ignore fine-grained fashion terminology.
+    \item \textbf{When to use:} Good as a baseline for broad semantic searches, but insufficient for strict attribute constraints.
+\end{itemize}
+
+\subsection*{B. Object Detection + Attribute Classification (e.g., Faster R-CNN)}
+\begin{itemize}
+    \item \textbf{How it works:} Detects bounding boxes for clothing items and runs a classifier to predict color, fabric, and style for each box.
+    \item \textbf{Trade-offs:} Highly accurate and compositional. However, the pipeline is extremely rigid, relies heavily on predefined bounding-box datasets, and scales poorly to open-vocabulary natural language queries.
+    \item \textbf{When to use:} Ideal for structured e-commerce databases, but fails for contextual ``vibe'' or ``environment'' searches.
+\end{itemize}
+
+\subsection*{C. Hybrid Semantic Retrieval with Fine-Tuned VLM (The Chosen Approach)}
+\begin{itemize}
+    \item \textbf{How it works:} Fuses the strengths of state-of-the-art vision encoders (FashionSigLIP) with Large Vision-Language Models (Qwen3-VL) that have been explicitly fine-tuned to extract both visual embeddings and highly detailed, ontology-aware text captions for each image.
+    \item \textbf{Trade-offs:} Requires significant upfront compute during the training and indexing phases, but provides unparalleled retrieval accuracy for compositional, attribute-heavy, and context-aware queries.
+    \item \textbf{When to use:} Best for complex, multi-attribute, open-vocabulary semantic search.
+\end{itemize}
+
+\section{Short Write-up on Chosen Approach}
+
+The implemented system leverages a \textbf{Hybrid Semantic Retrieval Pipeline}, supported by a massive custom training orchestration.
+
+\subsection*{1. Model Fine-Tuning \& Evaluation}
+Standard VLMs lack the strict vocabulary required for fashion retrieval. To solve this, we orchestrated a distributed Supervised Fine-Tuning (SFT) pipeline targeting \texttt{Qwen3-VL-8B-Thinking}:
+\begin{itemize}
+    \item \textbf{Dataset Processing:} A dataset of 8,500 images was processed and sliced into customized subsets (5,000 for SFT, 1,000 for Validation/Test). Image inputs were formatted using HuggingFace Chat Templates.
+    \item \textbf{Cloud Execution (Modal):} To handle the heavy compute, the training pipeline was deployed to a serverless \textbf{A100 (40GB) GPU} instance using Modal.
+    \item \textbf{LoRA Integration:} We applied Low-Rank Adaptation (\texttt{r=16}) to all dense layers (\texttt{q\_proj, k\_proj, v\_proj, o\_proj, gate\_proj, up\_proj, down\_proj}) to efficiently train the 8B model. 
+    \item \textbf{Custom Collator \& M-RoPE:} We built a custom data collator to dynamically patch visual matrices (\texttt{image\_grid\_thw}) and inject \texttt{mm\_token\_type\_ids} required by Qwen3's Multimodal Rotary Position Embedding (M-RoPE) mechanics.
+    \item \textbf{Evaluation Metrics:} The SFT model was evaluated on the 1,000-image test set using an exacting substring-match algorithm. It achieved an \textbf{Attribute F1 Score of 0.0791 (7.9\%)}. While exact-match string evaluations are notoriously strict for generative outputs, this provided a strong empirical baseline confirming the model learned the prompt structures. (BERTScore integration was also added to track semantic improvements).
+\end{itemize}
+
+\subsection*{2. The Indexing Architecture}
+For every image in the database, the indexer extracts two representations:
+\begin{enumerate}
+    \item \textbf{Visual Embeddings:} We use \texttt{Marqo-FashionSigLIP}, a variant of SigLIP explicitly fine-tuned on fashion datasets, to generate a 768-dimensional visual embedding. 
+    \item \textbf{Semantic Captions:} The fine-tuned \texttt{Qwen3-VL} generates an incredibly detailed structured caption. It explicitly identifies environments, vibes, clothing patterns, colors, and accessories. These captions are subsequently embedded into text vectors.
+\end{enumerate}
+Both embeddings, along with the raw metadata, are stored in \textbf{ChromaDB}.
+
+\subsection*{3. The Retrieval Architecture}
+When a user issues a natural language query (e.g., ``A red tie and a white shirt in a formal setting''):
+\begin{enumerate}
+    \item The query is embedded using the FashionSigLIP text encoder.
+    \item The engine performs an approximate nearest neighbor search across both the visual embedding collection and the VLM caption embedding collection.
+    \item A \textbf{Hybrid Scoring Function} is applied: \\
+    \texttt{Score = ($\alpha$ $\times$ Visual Similarity) + ($\beta$ $\times$ Caption Similarity) + ($\gamma$ $\times$ Metadata Boost)}
+    \item The Metadata Boost heavily penalizes candidates that lack the specific colors or objects explicitly mentioned in the query, effectively solving standard CLIP compositionality failures.
+\end{enumerate}
+
+\section{Codebase Link}
+The complete codebase is documented and structured cleanly. \\
+\url{https://github.com/vidit68/glance-multimodal-retrieval} \\
+\textit{Note: The codebase heavily utilizes Modal serverless infrastructure to orchestrate massive VLM fine-tuning across A100 GPUs and handles data via high-volume persistent mounts.}
+
+\section{Approaches for Future Work}
+
+\subsection*{A. Implementing Reinforcement Learning (GSPO) and Custom Loss}
+\begin{itemize}
+    \item \textbf{RL Alignment via GSPO:} While we established the SFT baseline, future work involves completing the Group Sequence Policy Optimization (GSPO) pipeline. By employing a reward function that directly evaluates the generation quality (F1 / BERTScore), we can align the VLM strictly to fashion retrieval metrics.
+    \item \textbf{Custom Loss Formulation:} We intend to design a custom loss function during the GSPO phase that dynamically weights precision over recall, heavily penalizing hallucinated attributes (e.g., predicting ``red tie'' when none exists) compared to missed minor attributes. This custom loss will seamlessly integrate with the policy gradient updates.
+\end{itemize}
+
+\subsection*{B. Adding Locations (Cities, Places) and Weather}
+\begin{itemize}
+    \item \textbf{Geospatial \& Temporal Indexing:} If the dataset contains GPS coordinates or timestamps, we can integrate a spatial-temporal vector database.
+    \item \textbf{VLM Prompt Expansion:} We can explicitly prompt the indexing VLM to infer weather (e.g., ``sunny'', ``winter snow'') and architectural location cues from the image background. 
+\end{itemize}
+
+\subsection*{C. Improving Precision with Cross-Encoders}
+\begin{itemize}
+    \item \textbf{Cross-Encoder Re-Ranking:} While the current system uses bi-encoders (SigLIP) for fast retrieval, precision can be significantly improved by applying a heavy Cross-Encoder (like ALBEF or BLIP-2 ITM) to the top-50 results. The cross-encoder can attend to the interaction between query words and image patches, entirely eliminating compositionality errors.
+\end{itemize}
+
+\end{document}

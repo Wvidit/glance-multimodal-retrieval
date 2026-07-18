@@ -1,0 +1,32 @@
+[project]
+name = "glance-fashion-retrieval"
+version = "0.1.0"
+description = "Multimodal fashion image retrieval with FashionSigLIP + VLM captioning"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0",
+    "transformers>=4.40",
+    "open-clip-torch>=2.24",
+    "chromadb>=0.5",
+    "Pillow>=10.0",
+    "tqdm>=4.60",
+    "requests>=2.28",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+modal = ["modal>=0.68"]
+demo = ["gradio>=4.0"]
+eval = ["matplotlib>=3.7", "jinja2>=3.1"]
+all = [
+    "modal>=0.68",
+    "gradio>=4.0",
+    "matplotlib>=3.7",
+    "jinja2>=3.1",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+[tool.setuptools]
+packages = ["indexer", "retriever", "evaluation"]
