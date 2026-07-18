@@ -51,7 +51,7 @@ Query: "A red tie and a white shirt in a formal setting"
 | Component | Model | Purpose |
 |---|---|---|
 | **Encoder** | [Marqo-FashionSigLIP](https://huggingface.co/Marqo/marqo-fashionSigLIP) | Fashion-domain visual & text embeddings (57% better MRR than FashionCLIP) |
-| **Captioner** | [LLaVA-v1.6-Mistral-7B](https://huggingface.co/llava-hf/llava-v1.6-mistral-7b-hf) | Rich natural-language fashion descriptions per image |
+| **Captioner** | [Qwen3-VL-8B-Thinking](https://huggingface.co/Qwen/Qwen3-VL-8B-Thinking) | Fine-tuned VLM (via LoRA) for structured semantic captions |
 | **Re-ranker** | [BLIP-2-FlanT5-XL](https://huggingface.co/Salesforce/blip2-flan-t5-xl) | Cross-encoder image-text matching for compositional queries |
 | **Vector DB** | [ChromaDB](https://docs.trychroma.com/) | Lightweight persistent vector storage with metadata filtering |
 
@@ -73,13 +73,14 @@ pip install -e ".[all]"
 python -m indexer.download_dataset --num_images 3000
 ```
 
-### 3. Generate Captions (Modal H100)
+### 3. Prepare Dataset & Fine-Tune VLM (Modal A100)
 
 ```bash
-modal run indexer/caption_modal.py
+python -m indexer.prepare_dataset
+modal run indexer/train_align_eval_modal.py
 ```
 
-### 4. Generate Embeddings (Modal H100)
+### 4. Generate Captions & Embeddings (Modal)
 
 ```bash
 modal run indexer/embed_modal.py
@@ -123,8 +124,10 @@ glance/
 │
 ├── indexer/                     # Part A: The Indexer
 │   ├── download_dataset.py      # Download & curate Fashionpedia subset
-│   ├── caption_modal.py         # Modal H100: VLM captioning (LLaVA)
-│   ├── embed_modal.py           # Modal H100: FashionSigLIP embeddings
+│   ├── prepare_dataset.py       # Convert annotations to conversational JSONL
+│   ├── train_align_eval_modal.py# Modal A100: SFT & Evaluation Pipeline
+│   ├── caption_modal.py         # Modal: VLM captioning
+│   ├── embed_modal.py           # Modal: FashionSigLIP embeddings
 │   └── build_index.py           # Build ChromaDB vector index
 │
 ├── retriever/                   # Part B: The Retriever
@@ -165,16 +168,11 @@ The higher weight on caption similarity (0.5 vs 0.4) compensates for CLIP's comp
 - **Hybrid retrieval** is O(log n) with ANN search + O(k) for re-ranking
 - To scale to 1M+ images: swap ChromaDB for Qdrant/Milvus, shard embeddings, cache model on Modal
 
-## Compute Budget
-
-| Task | GPU | Time | Cost |
-|---|---|---|---|
-| VLM Captioning (3K images) | H100 | ~30-45 min | ~$2-3 |
-| Embedding Generation | H100 | ~5 min | ~$0.35 |
-| Testing & iteration | H100 | ~30 min | ~$2 |
-| **Total** | | | **~$5-6** |
-
 ## Future Work
+
+### Reinforcement Learning (GSPO) & Custom Loss
+- Implement Group Sequence Policy Optimization (GSPO) to align the VLM purely to retrieval evaluation metrics (F1/BERTScore).
+- Design a precision-weighted custom loss function to heavily penalize hallucinated fashion attributes during RL generation.
 
 ### Adding Locations & Weather
 - Augment VLM captioning prompt to emphasize location/weather cues
